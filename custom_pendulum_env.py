@@ -77,6 +77,8 @@ class EncoderPendulumEnv(gym.Env):
 
         self.state = None # [true_theta, true_theta_dot]
         self.prev_theta_q = None
+        self.step_count = 0
+        self.max_episode_steps = 200 # Standard Gymnasium limit
 
     def _get_obs(self):
         # 1. Gerçek state'den açıyı al
@@ -103,6 +105,7 @@ class EncoderPendulumEnv(gym.Env):
 
     def step(self, action):
         th, thdot = self.state  # Gerçek (gizli) state
+        self.step_count += 1
         
         # Tork limiti uygula (Clip)
         u = np.clip(action, -self.tau_max, self.tau_max)[0]
@@ -142,7 +145,10 @@ class EncoderPendulumEnv(gym.Env):
         costs = norm_theta_q**2 + 0.1 * (theta_dot_est**2) + 0.001 * (u**2)
         reward = -costs
 
-        return delayed_obs, float(reward), False, False, {}
+        truncated = self.step_count >= self.max_episode_steps
+        terminated = False
+
+        return delayed_obs, float(reward), terminated, truncated, {}
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
@@ -150,6 +156,7 @@ class EncoderPendulumEnv(gym.Env):
         high = np.array([np.pi, 1]) # Başlangıç: rastgele açı, küçük hız
         self.state = self.np_random.uniform(low=-high, high=high)
         self.prev_theta_q = None
+        self.step_count = 0
         
         obs, _, _ = self._get_obs()
         
