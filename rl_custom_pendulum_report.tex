@@ -1,0 +1,101 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[turkish]{babel}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+% Code Style Setup
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+\lstset{style=mystyle}
+
+\title{Sim2Real (Simülasyondan Gerçeğe) Korumalı Özel Ters Sarkaç Ortamı \\
+\large Geliştirme, Eğitim ve Test Raporu (Code Review)}
+\author{Takviyeli Öğrenme Proje Raporu}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Proje Hedefi ve Sim2Real Kavramı}
+Bu projenin temel amacı, standart idealize edilmiş "Ters Sarkaç (Inverted Pendulum)" ortamının laboratuvar ve sanayi cihazlarındaki gerçek kısıtlamalara uyarlanmış "Custom" bir versiyonunu kodlamak ve bu gerçekçi ortam üzerinde **Proximal Policy Optimization (PPO)** algoritmasını eğitmektir. Simülasyonda eğitilen politikaların donanıma eksiksiz aktarılabilmesi için (Sim2Real), sisteme Motor Tork Limitleri, Enkoder Kuantizasyonu, Sensör Gürültüsü ve İletişim Gecikmesi entegre edilmiştir.
+
+Proje, üç adet temel Python modülünden oluşmaktadır:
+\begin{enumerate}
+    \item \textbf{\texttt{custom\_pendulum\_env.py}}: Fiziksel ortamı ve yapay sensörleri tanımlayan OpenAI/Gymnasium sınıfı.
+    \item \textbf{\texttt{train\_custom\_pendulum.py}}: PPO ajanını yapılandıran ve eğiten script.
+    \item \textbf{\texttt{show\_custom\_pendulum.py}}: Eğitilen modelin Pygame platformu üzerinden test ve görsel sunumunu yapan script.
+\end{enumerate}
+
+\newpage
+\section{Kod İncelemesi 1: \texttt{custom\_pendulum\_env.py}}
+\subsection{Matematiksel ve Fiziksel Altyapı}
+Standart pendulum ortamları çubuğun ortasındaki homojen dağılıma sahip eylemsizlik momentini hesaba katarken ($I = ml^2/3$), bu özel tasarım ağırlığın çubuğun ucunda (nokta kütle) olduğu $I = ml^2$ modeline geçiş yapmıştır. Bu, bir dc mo-torun (Örn: JGA25-370) ucuna eklenmiş gerçek bir sarkacın dinamiğini mükemmel simüle eder.
+
+\textbf{Enkoder Kuantizasyonu ve Sentetik Hız Kestirimi:} Gerçek donanımlarda açıyı sınırsız ondalık olarak okumak fiziksel olarak imkansızdır. Pürüzlü sensörlerin davranışı kuantizasyonla modellenmiştir:
+\begin{equation}
+    \theta_{step} = \frac{2\pi}{CPR} \quad \implies \quad \theta_q = \text{round}\left( \frac{\theta + \text{noise}}{\theta_{step}} \right) \cdot \theta_{step}
+\end{equation}
+Hız (\(\omega\)) doğrudan gerçek kinematik denklemden alınmamış, bir önceki okunan ayrık açı (\(\theta_{q, prev}\)) üzerinden türetilmiştir: $\omega \approx \frac{\Delta \theta_q}{\Delta t}$.
+
+\subsection{Code Review (Kod Analizi)}
+\begin{itemize}
+    \item \textbf{Güçlü Yönler:} Environment tasarımında \texttt{deque} kullanılarak 10ms'lik iletişim (haberleşme) gecikmesi modeli entegre edilmiştir. Ajana o anki durumu değil, kuyrukta bekleyen en eski bilgiyi vermesi, robotik uygulamalar için son derece kritiktir.
+    \item \textbf{Pygame Render Katmanı:} Model testlerini kullanıcıya aktarmak için, dinamik \texttt{window\_width} ve \texttt{window\_height} ofsetleri kullanılmış, sarkacın ucuna kütleyi temsil eden grafik (koyu gri daire) ve sol alt köşeye interaktif parametre tablosu (font render ile) entegre edilmiştir. Eksenlerin tamsayıya (Int) yuvarlanması, \texttt{invalid end\_pos argument} grafik çökmelerini engellemiştir.
+\end{itemize}
+
+\newpage
+\section{Kod İncelemesi 2: \texttt{train\_custom\_pendulum.py}}
+Bu dosya donanıma özel olarak hazırlanmış çevre kurulumunu (\texttt{make\_env} fonksiyonu) `Stable-Baselines3` kütüphanesinin PPO modülü ile birleştirir.
+
+\subsection{Hiperparametre Kararları (Code Review)}
+PPO (Proximal Policy Optimization) algoritması kullanılırken aşağıdaki kilit seçimler dikkate değerdir:
+\begin{itemize}
+    \item \textbf{\texttt{n\_steps=4096} ve \texttt{batch\_size=256}:} Ajanın ortamda yüksek gecikme (latency) ve sensör gürültüsü ile çalıştığı göz önüne alındığında, öğrenme istikrarını korumak için yüksek batch boyutu ve adım sayısı şarttır. Gürültülü ortamlarda (Örn: encoder jitter) küçük verilerle ağ parametrelerini aniden güncellemek "catastrophic forgetting"e (yıkıcı unutmaya) yol açabilirdi.
+    \item \textbf{\texttt{set\_random\_seed} ve Kararlılık:} Her iki çevrenin (\texttt{train} ve \texttt{eval}) ve global sistemin tohumları (seed: 42) sabitlenerek eğitimin (reproducibility) her çalıştırmada aynı sonucu üretmesi temin edilmiştir.
+    \item \textbf{Early Stopping (Erken Durdurma):} \texttt{StopTrainingOnRewardThreshold(-100)} fonksiyonu, model aşırı ezberlemeden veya stabil politikasını kaybetmeden eğitimi zamanında durdurmak üzerine dizayn edilmiştir.
+\end{itemize}
+
+\newpage
+\section{Kod İncelemesi 3: \texttt{show\_custom\_pendulum.py}}
+Bu program tamamen \textit{inference} (çıkarım) üzerine yazılmış, model eğitim maliyetlerinden sıyrılmış salt bir simülasyon sunumudur.
+
+\subsection{Model Test Optimizasyonu (Code Review)}
+\begin{itemize}
+    \item \textbf{Deterministik Karar Alma:} Python kodunda yer alan \texttt{model.predict(obs, deterministic=True)} kısmı kritik önem taşır. Eğitim sırasında PPO algoritması yeni durumları keşfetmek (exploration) için eylemlerine stokastik gürültüler (noise) ekler. Test modundaki deterministik seçim sayesinde ajan, bildiği "en optimal" eylemi gürültüsüz olarak seçmektedir.
+    \item \textbf{Cihaz Ataması (Device CPU):} Eğitimin \texttt{GPU (CUDA)} üzerinde yapılması hız sağlarken, bu simülasyon testinde \texttt{device="cpu"} tercih edilmiştir. GPU tensor transfer süreleri (overhead), render hızına zarar verebileceğinden bu küçük sinir ağı (MLP Policy) için çıkarımın CPU'da yapılması çok daha sağlıklı bir tercihtir.
+\end{itemize}
+
+\section{Sonuç ve Gerçekleşen Testler}
+Ters sarkaç modeli; $0.2 \, \text{kg}$ kütle, $0.4 \, \text{metre}$ çubuk uzunluğu, maksimum $2.0 \, \text{Nm}$ motor torku ve 10ms'lik kontrol arayüzü gecikmesi gibi oldukça ağır sınırlandırmalara rağmen başarılı bir öğrenme gerçekleştirmiştir. Model $4000$ adımlık periyotlarla yapılan değerlendirmeleri başarıyla geçip, hedef olan asimptotik stabiliteyi eksi ödülleri minimuma ($-100$ üstü) taşıyarak çözmüştür.
+
+\end{document}
