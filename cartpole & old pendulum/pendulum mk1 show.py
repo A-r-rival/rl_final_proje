@@ -4,7 +4,8 @@ from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnRewar
 import os
 
 # Ayarlar
-MODEL_NAME = "ppo_pendulum_mk1"
+#MODEL_NAME = "ppo_pendulum_mk1"
+MODEL_NAME = "ppo_pendulum_sde_surgeried"
 
 test_env = gym.make("Pendulum-v1", render_mode="human")
 

@@ -13,7 +13,7 @@ eval_env = gym.make("CartPole-v1")
 
 if os.path.exists(f"{MODEL_NAME}.zip"):
     print("Model yükleniyor...")
-    model = PPO.load(MODEL_NAME, env=train_env, device="cuda") # Varsa GPU kullan
+    model = PPO.load(MODEL_NAME, env=train_env, device="cuda")
 else:
     print("Yeni model oluşturuluyor...")
     model = PPO("MlpPolicy", train_env, verbose=1, device="cuda")
