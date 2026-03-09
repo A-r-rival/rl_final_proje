@@ -18,23 +18,25 @@ class EncoderPendulumEnv(gym.Env):
     """
     metadata = {
         "render_modes": ["human", "rgb_array"], 
-        "render_fps": 30
+        "render_fps": 40
     }
 
     def __init__(self, 
-                 mass=0.2,            # kg
+                 mass=0.2,            # kg (uçtaki kütle)
                  length=0.4,          # metre
+                 rod_mass=0.05,       # kg (çubuğun kendi homojen kütlesi)
                  tau_max=2.0,         # Nm (Motor tork limiti)
                  cpr=4096,            # Encoder Çözünürlüğü
                  encoder_noise_std=0.001, 
                  delay_ms=10,         # Gecikme (milisaniye)
-                 dt=0.05,             # Simülasyon adım süresi (saniye)
+                 dt=0.025,            # Simülasyon adım süresi (saniye)
                  render_mode=None):
         
         super().__init__()
         
         self.m = mass
         self.l = length
+        self.rod_m = rod_mass
         self.tau_max = tau_max
         self.dt = dt
         self.g = 9.81
@@ -42,12 +44,12 @@ class EncoderPendulumEnv(gym.Env):
         self.angle_step = 2 * np.pi / cpr
         self.encoder_noise_std = encoder_noise_std
         
-        # Atalet formülü (Ortadan asılı çubuk I=ml^2/3 yerine uçta ağırlık I=ml^2)
-        self.inertia = self.m * (self.l ** 2)
+        # Atalet formülü: Uçtaki yük I_m = m*l^2 + Homojen Çubuk I_rod = 1/3 * m_rod * l^2
+        self.inertia = self.m * (self.l ** 2) + (1.0/3.0) * self.rod_m * (self.l ** 2)
         
         # Observation Buffer for Latency
         self.delay_steps = max(1, int(delay_ms / (self.dt * 1000)))  # dt=0.05s -> 50ms (Step). Demek ki delay_ms 10 ise 0 adım olur, max(1, ...) ile an az 1 frame (50ms) geciktiriyoruz.
-        # Eğer özel hızlı dt istenirse dt=0.01s yapılıp delay_steps artırılabilir. Biz şimdilik Gymnasium standardı 0.05s de kalıyoruz.
+        # Eğer özel hızlı dt istenirse dt=0.01s yapılıp delay_steps artırılabilir. Normalde Gymnasium standardı 0.05s.
         self.obs_buffer = deque(maxlen=self.delay_steps)
         
         # Max hız limiti
@@ -120,13 +122,17 @@ class EncoderPendulumEnv(gym.Env):
         # Standart Gym förmülü:
         g = self.g
         m = self.m
+        rod_m = self.rod_m
         l = self.l
         dt = self.dt
         
-        newthdot = thdot + (3 * g / (2 * l) * np.sin(th) + 3.0 / (m * l**2) * u) * dt # Gym standardı.
-        # Biz bunu I = ml^2'ye göre uyarlıyoruz:
-        # Tork_g = m * g * l * sin(th) (Lokal ağırlık merkezi uca alındı)
-        newthdot = thdot + ((m * g * l * np.sin(th) + u) / self.inertia) * dt
+        # Biz bunu toplam Eylemsizlik ve yeni Ağırlık Merkezine göre uyarlıyoruz:
+        # Tork_g_total = Uç ağırlığı Torku + Çubuk Ağırlığı Torku (L/2'den etki eder)
+        # = m * g * l * sin(th) + rod_m * g * (l/2) * sin(th)
+        gravity_torque = (m * l + rod_m * (l / 2.0)) * g * np.sin(th)
+        
+        # alpha = (Tork_g_total + Motor_Torku) / I_total
+        newthdot = thdot + ((gravity_torque + u) / self.inertia) * dt
         
         newthdot = np.clip(newthdot, -self.max_speed, self.max_speed)
         newth = th + newthdot * dt
@@ -228,7 +234,8 @@ class EncoderPendulumEnv(gym.Env):
         # Parametreleri (mass, length, tau, vs.) sol alta yazdır
         font = pygame.font.SysFont(None, 24)
         infos = [
-            f"Mass: {self.m} kg",
+            f"Tip Mass: {self.m} kg",
+            f"Rod Mass: {self.rod_m} kg",
             f"Length: {self.l} m",
             f"Max Torque: {self.tau_max} Nm",
             f"CPR: {self.cpr}",
