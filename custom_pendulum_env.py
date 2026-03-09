@@ -204,16 +204,22 @@ class EncoderPendulumEnv(gym.Env):
         scale = (self.window_size // 2) * 0.8
         
         # Gerçek açıya göre (kırmızı çubuk)
-        end_x = offset + scale * np.sin(th)
-        end_y = offset - scale * np.cos(th)
+        end_x = int(offset + scale * np.sin(th))
+        end_y = int(offset - scale * np.cos(th))
         
+        # Çubuğun kendisini çiz
         pygame.draw.line(self.screen, (200, 50, 50), (offset, offset), (end_x, end_y), 8)
+        
+        # Uca bir ağırlık (kütle) ekle (koyu gri bir daire)
+        pygame.draw.circle(self.screen, (100, 100, 100), (end_x, end_y), 20)
+        
+        # Ortadaki merkez mil noktasını (mavi daire) en üste çiz (z-index gibi)
         pygame.draw.circle(self.screen, (50, 50, 200), (offset, offset), 10)
         
         # Enkoderin gördüğü uç noktayı da gösterelim (yeşil gölge, çok hafif sapmış olabilir)
         if self.prev_theta_q is not None:
-             end_qx = offset + scale * np.sin(self.prev_theta_q)
-             end_qy = offset - scale * np.cos(self.prev_theta_q)
+             end_qx = int(offset + scale * np.sin(self.prev_theta_q))
+             end_qy = int(offset - scale * np.cos(self.prev_theta_q))
              pygame.draw.line(self.screen, (50, 200, 50), (offset, offset), (end_qx, end_qy), 2)
 
         if self.render_mode == "human":
