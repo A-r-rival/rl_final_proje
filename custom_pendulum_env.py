@@ -182,6 +182,7 @@ class EncoderPendulumEnv(gym.Env):
 
         if self.screen is None:
             pygame.init()
+            pygame.font.init()
             if self.render_mode == "human":
                 pygame.display.init()
                 self.screen = pygame.display.set_mode(
@@ -221,6 +222,23 @@ class EncoderPendulumEnv(gym.Env):
              end_qx = int(offset + scale * np.sin(self.prev_theta_q))
              end_qy = int(offset - scale * np.cos(self.prev_theta_q))
              pygame.draw.line(self.screen, (50, 200, 50), (offset, offset), (end_qx, end_qy), 2)
+
+        # Parametreleri (mass, length, tau, vs.) sol üste yazdır
+        font = pygame.font.SysFont(None, 24)
+        infos = [
+            f"Mass: {self.m} kg",
+            f"Length: {self.l} m",
+            f"Max Torque: {self.tau_max} Nm",
+            f"CPR: {self.cpr}",
+            f"Noise Std: {self.encoder_noise_std}",
+            f"Delay: {int(self.delay_steps * self.dt * 1000)} ms"
+        ]
+        
+        y_text = 10
+        for info in infos:
+            text_surface = font.render(info, True, (0, 0, 0))
+            self.screen.blit(text_surface, (10, y_text))
+            y_text += 25
 
         if self.render_mode == "human":
             pygame.event.pump()
