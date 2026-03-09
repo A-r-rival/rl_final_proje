@@ -7,6 +7,7 @@ import numpy as np
 MODEL_NAME = "ppo_custom_pendulum"
 CPR = 4096
 MASS = 0.2
+ROD_MASS = 0.05
 LENGTH = 0.4
 TAU_MAX = 2.0
 NOISE_STD = 0.001
@@ -14,13 +15,14 @@ DELAY_MS = 10
 SEED = 42
 
 print(f"[{MODEL_NAME}] modeli görselleştirilmek üzere yükleniyor...")
-print(f"Fiziksel Parametreler -> Mass: {MASS}kg, Length: {LENGTH}m, Delay: {DELAY_MS}ms, CPR: {CPR}")
+print(f"Fiziksel Parametreler -> Tip Mass: {MASS}kg, Rod Mass: {ROD_MASS}kg, Length: {LENGTH}m, Delay: {DELAY_MS}ms, CPR: {CPR}")
 
 # Sadece render ("human") modu aktif olan, tekil bir fonksiyon oluşturuyoruz
 def make_test_env():
     return EncoderPendulumEnv(
         mass=MASS, 
-        length=LENGTH, 
+        length=LENGTH,
+        rod_mass=ROD_MASS, 
         tau_max=TAU_MAX,
         cpr=CPR,
         encoder_noise_std=NOISE_STD,

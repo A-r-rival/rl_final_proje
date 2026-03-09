@@ -10,6 +10,7 @@ from custom_pendulum_env import EncoderPendulumEnv
 MODEL_NAME = "ppo_custom_pendulum"
 CPR = 4096
 MASS = 0.2
+ROD_MASS = 0.05
 LENGTH = 0.4
 TAU_MAX = 2.0
 NOISE_STD = 0.001
@@ -23,7 +24,8 @@ set_random_seed(SEED)
 def make_env(render_mode=None):
     env = EncoderPendulumEnv(
         mass=MASS, 
-        length=LENGTH, 
+        length=LENGTH,
+        rod_mass=ROD_MASS, 
         tau_max=TAU_MAX,
         cpr=CPR,
         encoder_noise_std=NOISE_STD,
@@ -53,7 +55,7 @@ else:
 
 # 3. Değerlendirme Mekanizması
 # NOT: Bizim Custom Env negatif "cost" döndürüyor, standart pendulum'daki -200 e benzer iyi bir skor yakalayabiliriz.
-callback_on_best = StopTrainingOnRewardThreshold(reward_threshold=-150, verbose=1)
+callback_on_best = StopTrainingOnRewardThreshold(reward_threshold=-100, verbose=1)
 
 eval_callback = EvalCallback(eval_env, 
                              callback_on_new_best=callback_on_best, 
@@ -62,11 +64,11 @@ eval_callback = EvalCallback(eval_env,
                              best_model_save_path="./logs/")
 
 # Checkpoint Mekanizması
-checkpoint_callback = CheckpointCallback(save_freq=50000, save_path='./logs/checkpoints/',
+checkpoint_callback = CheckpointCallback(save_freq=10000, save_path='./logs/checkpoints/',
                                          name_prefix='ppo_custom')
 
 print(f"Eğitim başladı (Ekran açılmaz)... CPR: {CPR}, m: {MASS}kg, l: {LENGTH}m")
-model.learn(total_timesteps=300000, callback=[eval_callback, checkpoint_callback], progress_bar=True)
+model.learn(total_timesteps=30000, callback=[eval_callback, checkpoint_callback], progress_bar=True)
 model.save(MODEL_NAME)
 train_env.close()
 eval_env.close()
