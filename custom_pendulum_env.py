@@ -73,7 +73,8 @@ class EncoderPendulumEnv(gym.Env):
         self.screen = None
         self.clock = None
         self.isopen = True
-        self.window_size = 500
+        self.window_width = 800
+        self.window_height = 500
 
         self.state = None # [true_theta, true_theta_dot]
         self.prev_theta_q = None
@@ -186,10 +187,10 @@ class EncoderPendulumEnv(gym.Env):
             if self.render_mode == "human":
                 pygame.display.init()
                 self.screen = pygame.display.set_mode(
-                    (self.window_size, self.window_size)
+                    (self.window_width, self.window_height)
                 )
             else:  # mode == "rgb_array"
-                self.screen = pygame.Surface((self.window_size, self.window_size))
+                self.screen = pygame.Surface((self.window_width, self.window_height))
         if self.clock is None:
             self.clock = pygame.time.Clock()
 
@@ -199,31 +200,32 @@ class EncoderPendulumEnv(gym.Env):
         # Gymnasium Pendulum-v1 tarzı render
         th, _ = self.state
         
-        # Koordinat haritalaması
-        offset = self.window_size // 2
-        # Çubuk uzunluğunu piksele map edelim. (maksimum yarı çapın %40'ı)
-        scale = (self.window_size // 2) * 0.8
+        # Koordinat haritalaması (Ekranın ortasına monte et)
+        offset_x = self.window_width // 2
+        offset_y = self.window_height // 2
+        # Çubuk uzunluğunu piksele map edelim. (maksimum yarı çapın (boyun) %40'ı)
+        scale = (self.window_height // 2) * 0.8
         
         # Gerçek açıya göre (kırmızı çubuk)
-        end_x = int(offset + scale * np.sin(th))
-        end_y = int(offset - scale * np.cos(th))
+        end_x = int(offset_x + scale * np.sin(th))
+        end_y = int(offset_y - scale * np.cos(th))
         
         # Çubuğun kendisini çiz
-        pygame.draw.line(self.screen, (200, 50, 50), (offset, offset), (end_x, end_y), 8)
+        pygame.draw.line(self.screen, (200, 50, 50), (offset_x, offset_y), (end_x, end_y), 8)
         
         # Uca bir ağırlık (kütle) ekle (koyu gri bir daire)
         pygame.draw.circle(self.screen, (100, 100, 100), (end_x, end_y), 20)
         
         # Ortadaki merkez mil noktasını (mavi daire) en üste çiz (z-index gibi)
-        pygame.draw.circle(self.screen, (50, 50, 200), (offset, offset), 10)
+        pygame.draw.circle(self.screen, (50, 50, 200), (offset_x, offset_y), 10)
         
         # Enkoderin gördüğü uç noktayı da gösterelim (yeşil gölge, çok hafif sapmış olabilir)
         if self.prev_theta_q is not None:
-             end_qx = int(offset + scale * np.sin(self.prev_theta_q))
-             end_qy = int(offset - scale * np.cos(self.prev_theta_q))
-             pygame.draw.line(self.screen, (50, 200, 50), (offset, offset), (end_qx, end_qy), 2)
+             end_qx = int(offset_x + scale * np.sin(self.prev_theta_q))
+             end_qy = int(offset_y - scale * np.cos(self.prev_theta_q))
+             pygame.draw.line(self.screen, (50, 200, 50), (offset_x, offset_y), (end_qx, end_qy), 2)
 
-        # Parametreleri (mass, length, tau, vs.) sol üste yazdır
+        # Parametreleri (mass, length, tau, vs.) sol alta yazdır
         font = pygame.font.SysFont(None, 24)
         infos = [
             f"Mass: {self.m} kg",
@@ -231,10 +233,11 @@ class EncoderPendulumEnv(gym.Env):
             f"Max Torque: {self.tau_max} Nm",
             f"CPR: {self.cpr}",
             f"Noise Std: {self.encoder_noise_std}",
-            f"Delay: {int(self.delay_steps * self.dt * 1000)} ms"
+            f"Comm. Delay: {int(self.delay_steps * self.dt * 1000)} ms"
         ]
         
-        y_text = 10
+        # Sol alttan başlayıp her satırda yukarıya doğru diz (pencere yüksekliği baz alınarak)
+        y_text = self.window_height - (len(infos) * 25) - 10 
         for info in infos:
             text_surface = font.render(info, True, (0, 0, 0))
             self.screen.blit(text_surface, (10, y_text))
