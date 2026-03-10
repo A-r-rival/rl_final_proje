@@ -9,7 +9,7 @@ CPR = 4096
 MASS = 0.2
 ROD_MASS = 0.05
 LENGTH = 0.4
-TAU_MAX = 2.0
+TAU_MAX = 10.0
 NOISE_STD = 0.001
 DELAY_MS = 10
 SEED = 42
@@ -35,7 +35,10 @@ test_env.seed(SEED)
 
 # Modeli Disk'ten Yükle
 try:
-    model = PPO.load(MODEL_NAME, env=test_env, device="cpu") # Inference (test) CPU'da daha stabildir
+    custom_objects = {
+        "action_space": test_env.action_space,
+    }
+    model = PPO.load(MODEL_NAME, env=test_env, device="cpu", custom_objects=custom_objects) # Inference (test) CPU'da daha stabildir
 except FileNotFoundError:
     print(f"\n[HATA] '{MODEL_NAME}.zip' dosyası bulunamadı. Lütfen önce `train_custom_pendulum.py` ile modeli eğitin.")
     exit(1)

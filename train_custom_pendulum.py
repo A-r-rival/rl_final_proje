@@ -12,7 +12,7 @@ CPR = 4096
 MASS = 0.2
 ROD_MASS = 0.05
 LENGTH = 0.4
-TAU_MAX = 2.0
+TAU_MAX = 5.0
 NOISE_STD = 0.001
 DELAY_MS = 10
 SEED = 42
@@ -43,7 +43,11 @@ eval_env.seed(SEED)
 
 if os.path.exists(f"{MODEL_NAME}.zip"):
     print(f"{MODEL_NAME} model yükleniyor...")
-    model = PPO.load(MODEL_NAME, env=train_env, device="cuda")
+    # Tork gibi değerler değiştiğinde Action Space uyuşmazlığını önlemek için:
+    custom_objects = {
+        "action_space": train_env.action_space,
+    }
+    model = PPO.load(MODEL_NAME, env=train_env, device="cuda", custom_objects=custom_objects)
 else:
     print("Yeni Özel Simülasyon modeli oluşturuluyor...")
     # ChatGPT tavsiyeli gürültülü ortam için sağlam hiperparametreler
@@ -64,11 +68,11 @@ eval_callback = EvalCallback(eval_env,
                              best_model_save_path="./logs/")
 
 # Checkpoint Mekanizması
-checkpoint_callback = CheckpointCallback(save_freq=10000, save_path='./logs/checkpoints/',
+checkpoint_callback = CheckpointCallback(save_freq=1000, save_path='./logs/checkpoints/',
                                          name_prefix='ppo_custom')
 
 print(f"Eğitim başladı (Ekran açılmaz)... CPR: {CPR}, m: {MASS}kg, l: {LENGTH}m")
-model.learn(total_timesteps=30000, callback=[eval_callback, checkpoint_callback], progress_bar=True)
+model.learn(total_timesteps=1000, callback=[eval_callback, checkpoint_callback], progress_bar=True)
 model.save(MODEL_NAME)
 train_env.close()
 eval_env.close()
