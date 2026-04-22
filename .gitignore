@@ -9,7 +9,7 @@ env/
 # RL specific
 logs/
 tensorboard/
-#*.zip
+*.zip
 # !ppo_cartpole_perfect.zip # Eğer son halini paylaşmak istersen ünlemle hariç tutabilirsin
 
 # IDE

@@ -1,96 +1,161 @@
 import os
-from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnRewardThreshold, CheckpointCallback
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3 import PPO, SAC
+from stable_baselines3.common.callbacks import (
+    EvalCallback, CheckpointCallback
+)
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 from stable_baselines3.common.utils import set_random_seed
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.callbacks import BaseCallback
 from custom_pendulum_env import EncoderPendulumEnv
+import psutil
+import subprocess
 
-# Ayarlar
-MODEL_NAME = "ppo_custom_pendulum"
-CPR = 4096
-MASS = 0.2
-ROD_MASS = 0.05
-LENGTH = 0.4
-TAU_MAX = 5.0
-NOISE_STD = 0.001
-DELAY_MS = 10
-SEED = 42
+# ─── Ayarlar ───────────────────────────────────────────────────
+MODEL_NAME   = "ppo_custom_pendulum_namiki120"
+N_ENVS       = 8          # Paralel ortam sayısı
+TOTAL_STEPS  = 1_000_000  # En az 1M (swing-up için 2M önerilir)
+SEED         = 42
 
-# Reproducibility için seed ayarla
-set_random_seed(SEED)
+ENV_KWARGS = dict(
+    mass=0.2, length=0.3, rod_mass=0.023,
+    tau_max=1.41, cpr=640,
+    encoder_noise_std=0.001, delay_ms=10,
+)
 
-# Ortamları Oluşturma Fonksiyonu
-def make_env(render_mode=None):
-    env = EncoderPendulumEnv(
-        mass=MASS, 
-        length=LENGTH,
-        rod_mass=ROD_MASS, 
-        tau_max=TAU_MAX,
-        cpr=CPR,
-        encoder_noise_std=NOISE_STD,
-        delay_ms=DELAY_MS,
-        render_mode=render_mode
+# ─── Domain Randomization destekli ortam ──────────────────────
+def make_env(rank: int, seed: int = 0, randomize: bool = True, render_mode=None):
+    def _init():
+        import numpy as np
+        rng = np.random.default_rng(seed + rank)
+        kwargs = ENV_KWARGS.copy()
+        if randomize:
+            kwargs["mass"]      = kwargs["mass"]      * float(rng.uniform(0.9, 1.1)) # ±%10
+            kwargs["length"]    = kwargs["length"]    * float(rng.uniform(0.9, 1.1)) # ±%10
+            kwargs["tau_max"]   = kwargs["tau_max"]   * float(rng.uniform(0.9, 1.1)) # ±%10
+        env = EncoderPendulumEnv(**kwargs, render_mode=render_mode)
+        env = Monitor(env)
+        return env
+    set_random_seed(seed + rank)
+    return _init
+
+# ─── Ortamları Oluştur ─────────────────────────────────────────
+if __name__ == '__main__':
+    train_env = SubprocVecEnv([make_env(i, SEED) for i in range(N_ENVS)])
+    train_env = VecNormalize(train_env, norm_obs=True, norm_reward=True, clip_obs=10.0)
+
+    eval_env_raw = SubprocVecEnv([make_env(0, SEED + 100, randomize=False)])
+    eval_env = VecNormalize(eval_env_raw, norm_obs=True, norm_reward=False, 
+                            training=False, clip_obs=10.0)
+
+    # ─── Özel CPU/GPU İzleme Callback'i ───────────────────────────
+    class SystemMonitorCallback(BaseCallback):
+        def __init__(self, log_freq: int = 1000, verbose: int = 0):
+            super().__init__(verbose)
+            self.log_freq = log_freq
+
+        def _on_step(self) -> bool:
+            # Her N adımda bir (GPU'yu çok yormamak için) ölçüm al
+            if self.n_calls % self.log_freq == 0:
+                # CPU ve RAM
+                try:
+                    cpu_usage = psutil.cpu_percent()
+                    self.logger.record("system/cpu_usage_percent", cpu_usage)
+                except Exception:
+                    pass
+                
+                # GPU (nvidia-smi kullanarak)
+                try:
+                    smi_output = subprocess.check_output(
+                        ["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"],
+                        encoding="utf-8"
+                    ).strip().split('\n')[0]
+                    self.logger.record("system/gpu_usage_percent", float(smi_output))
+                except Exception:
+                    pass
+            return True
+
+    # ─── Model ────────────────────────────────────────────────────
+    VECNORM_PATH = f"{MODEL_NAME}_vecnorm.pkl"
+
+    if os.path.exists(f"{MODEL_NAME}.zip"):
+        print(f"Model yükleniyor: {MODEL_NAME}")
+        train_env = VecNormalize.load(VECNORM_PATH, train_env)
+        model = PPO.load(MODEL_NAME, env=train_env, device="cuda",
+                         custom_objects={"action_space": train_env.action_space})
+    else:
+        print("Yeni model oluşturuluyor...")
+        model = PPO(
+            "MlpPolicy", train_env,
+            verbose=1, device="cuda",
+            seed=SEED,
+            # ── Rollout ──
+            n_steps=2048,        # Her env başına adım (toplam: 2048*8=16384)
+            batch_size=512,
+            n_epochs=20,
+            # ── Öğrenme ──
+            learning_rate=3e-4,
+            gamma=0.99,
+            gae_lambda=0.95,
+            # ── Clipping & Entropy ──
+            clip_range=0.2,
+            ent_coef=0.005,      # Swing-up için exploration kritik
+            vf_coef=0.5,
+            max_grad_norm=0.5,
+            # ── TensorBoard ──
+            tensorboard_log="./tb_logs/",
+        )
+
+    # ─── Callback'ler ─────────────────────────────────────────────
+    eval_callback = EvalCallback(
+        eval_env,
+        best_model_save_path="./logs/best_model/",
+        log_path="./logs/",
+        eval_freq=max(10_000 // N_ENVS, 1),  # ~10k adımda bir değerlendir
+        n_eval_episodes=10,
+        deterministic=True,
+        verbose=1,
     )
-    env = Monitor(env) # Tensorboard ve Terminal çıktıları için ortamı Monitor'e sarmalıyoruz
-    return env
 
-# 1. EĞİTİM AŞAMASI
-train_env = DummyVecEnv([lambda: make_env(render_mode=None)])
-train_env.seed(SEED)
-eval_env = DummyVecEnv([lambda: make_env(render_mode=None)])
-eval_env.seed(SEED)
+    checkpoint_callback = CheckpointCallback(
+        save_freq=max(50_000 // N_ENVS, 1),
+        save_path="./logs/checkpoints/",
+        name_prefix="ppo_custom",
+        save_vecnormalize=True,   # VecNormalize istatistiklerini de kaydet!
+    )
 
-if os.path.exists(f"{MODEL_NAME}.zip"):
-    print(f"{MODEL_NAME} model yükleniyor...")
-    # Tork gibi değerler değiştiğinde Action Space uyuşmazlığını önlemek için:
-    custom_objects = {
-        "action_space": train_env.action_space,
-    }
-    model = PPO.load(MODEL_NAME, env=train_env, device="cuda", custom_objects=custom_objects)
-else:
-    print("Yeni Özel Simülasyon modeli oluşturuluyor...")
-    # ChatGPT tavsiyeli gürültülü ortam için sağlam hiperparametreler
-    model = PPO("MlpPolicy", train_env, verbose=1, device="cuda",
-                n_steps=4096, 
-                batch_size=256, 
-                learning_rate=3e-4,
-                seed=SEED)
+    # ─── Eğitim ───────────────────────────────────────────────────
+    sys_monitor_callback = SystemMonitorCallback(log_freq=max(5000 // N_ENVS, 1))
 
-# 3. Değerlendirme Mekanizması
-# NOT: Bizim Custom Env negatif "cost" döndürüyor, standart pendulum'daki -200 e benzer iyi bir skor yakalayabiliriz.
-callback_on_best = StopTrainingOnRewardThreshold(reward_threshold=-100, verbose=1)
+    print(f"Eğitim başlıyor | {N_ENVS} paralel env | {TOTAL_STEPS:,} adım")
+    print("Durdurmak isterseniz terminalde CTRL+C tuşlarına basabilirsiniz. Mevcut ilerleme güvenle kaydedilecektir.")
+    try:
+        model.learn(
+            total_timesteps=TOTAL_STEPS,
+            callback=[eval_callback, checkpoint_callback, sys_monitor_callback],
+            progress_bar=True,
+            reset_num_timesteps=False,  # Resume için False
+        )
+    except KeyboardInterrupt:
+        print("\n[!] Kullanıcı tarafından eğitim elle durduruldu (CTRL+C). Eğitimin son durumu kaydediliyor, lütfen bekleyin...")
 
-eval_callback = EvalCallback(eval_env, 
-                             callback_on_new_best=callback_on_best, 
-                             verbose=1, 
-                             eval_freq=4000,
-                             best_model_save_path="./logs/")
+    model.save(MODEL_NAME)
+    train_env.save(VECNORM_PATH)   # Normalizasyon istatistiklerini kaydet
+    train_env.close()
+    eval_env.close()
 
-# Checkpoint Mekanizması
-checkpoint_callback = CheckpointCallback(save_freq=1000, save_path='./logs/checkpoints/',
-                                         name_prefix='ppo_custom')
+    # ─── Test ─────────────────────────────────────────────────────
+    print("\nEğitim tamamlandı. Test başlıyor...")
+    test_env_raw = SubprocVecEnv([make_env(0, SEED, randomize=False, render_mode="human")])
+    test_env = VecNormalize.load(VECNORM_PATH, test_env_raw)
+    test_env.training = False   # Test sırasında istatistik güncelleme
 
-print(f"Eğitim başladı (Ekran açılmaz)... CPR: {CPR}, m: {MASS}kg, l: {LENGTH}m")
-model.learn(total_timesteps=1000, callback=[eval_callback, checkpoint_callback], progress_bar=True)
-model.save(MODEL_NAME)
-train_env.close()
-eval_env.close()
+    obs = test_env.reset()
+    for _ in range(1000):
+        action, _ = model.predict(obs, deterministic=True)
+        obs, reward, done, info = test_env.step(action)
+        test_env.render()
+        if done[0]:
+            obs = test_env.reset()
 
-# ---
-
-# 2. TEST AŞAMASI
-print("Eğitim bitti. Sonuçlar görselleştiriliyor...")
-test_env = DummyVecEnv([lambda: make_env(render_mode="human")])
-obs = test_env.reset()
-
-for _ in range(1000):
-    action, _states = model.predict(obs, deterministic=True)
-    obs, reward, done, info = test_env.step(action)
-    test_env.render()
-    
-    # DummyVecEnv done state'ini liste olarak döndürür
-    if done[0]:
-        obs = test_env.reset()
-
-test_env.close()
+    test_env.close()

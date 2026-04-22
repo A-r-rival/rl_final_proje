@@ -25,8 +25,8 @@ class EncoderPendulumEnv(gym.Env):
                  mass=0.2,            # kg (uçtaki kütle)
                  length=0.4,          # metre
                  rod_mass=0.05,       # kg (çubuğun kendi homojen kütlesi)
-                 tau_max=2.0,         # Nm (Motor tork limiti)
-                 cpr=4096,            # Encoder Çözünürlüğü
+                 tau_max=1.41,        # Nm (Motor tork limiti, ~16kg.cm'nin %90'ı güvenli pay)
+                 cpr=640,             # Encoder Çözünürlüğü (2 darbe * 4(Quadrature) * 80 redüktör = 640)
                  encoder_noise_std=0.001, 
                  delay_ms=10,         # Gecikme (milisaniye)
                  dt=0.025,            # Simülasyon adım süresi (saniye)
@@ -48,12 +48,11 @@ class EncoderPendulumEnv(gym.Env):
         self.inertia = self.m * (self.l ** 2) + (1.0/3.0) * self.rod_m * (self.l ** 2)
         
         # Observation Buffer for Latency
-        self.delay_steps = max(1, int(delay_ms / (self.dt * 1000)))  # dt=0.05s -> 50ms (Step). Demek ki delay_ms 10 ise 0 adım olur, max(1, ...) ile an az 1 frame (50ms) geciktiriyoruz.
-        # Eğer özel hızlı dt istenirse dt=0.01s yapılıp delay_steps artırılabilir. Normalde Gymnasium standardı 0.05s.
+        self.delay_steps = max(1, round(delay_ms / (self.dt * 1000)))
         self.obs_buffer = deque(maxlen=self.delay_steps)
         
-        # Max hız limiti
-        self.max_speed = 8.0 
+        # Max hız limiti (120 RPM ~ 12.56 rad/s)
+        self.max_speed = 12.56 
         
         # Action: Sadece Tork
         self.action_space = spaces.Box(
@@ -160,8 +159,20 @@ class EncoderPendulumEnv(gym.Env):
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         
-        high = np.array([np.pi, 1]) # Başlangıç: rastgele açı, küçük hız
-        self.state = self.np_random.uniform(low=-high, high=high)
+        # Curriculum: options dict ile kontrol edilebilir
+        mode = options.get("reset_mode", "random") if options else "random"
+        
+        if mode == "bottom":        # Başlangıç eğitimi: aşağıda başla
+            theta_init = self.np_random.uniform(np.pi - 0.3, np.pi + 0.3)
+            thdot_init = self.np_random.uniform(-0.5, 0.5)
+        elif mode == "top":         # İnce ayar: yukarıda başla
+            theta_init = self.np_random.uniform(-0.2, 0.2)
+            thdot_init = self.np_random.uniform(-0.5, 0.5)
+        else:                       # Tam random (mevcut)
+            theta_init = self.np_random.uniform(-np.pi, np.pi)
+            thdot_init = self.np_random.uniform(-1.0, 1.0)
+        
+        self.state = np.array([theta_init, thdot_init], dtype=np.float32)
         self.prev_theta_q = None
         self.step_count = 0
         
